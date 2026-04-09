@@ -16,6 +16,8 @@ jobs:
           channel: 'stable'
       - name: Install Dependencies
         run: flutter pub get
+      - name: Configure Platform
+        run: flutter create . --platforms ios,android
       - name: Analyze
         run: flutter analyze
       - name: Build iOS
