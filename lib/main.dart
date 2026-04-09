@@ -82,7 +82,7 @@ class HomeScreen extends StatelessWidget {
             onPressed: () {
               viewModel.toggleRecording();
               ScaffoldMessenger.of(context).showSnackBar(
-                Snackbar(content: Text(viewModel.isRecording ? 'Recording Started' : 'Recording Stopped & Saved')),
+                SnackBar(content: Text(viewModel.isRecording ? 'Recording Started' : 'Recording Stopped & Saved')),
               );
             },
           ),
@@ -99,7 +99,7 @@ class HomeScreen extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.image, size: 64, color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
+                      Icon(Icons.image, size: 64, color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5)),
                       const SizedBox(height: 16),
                       Text(
                         'Select an image to preview',
@@ -168,7 +168,7 @@ class ImagePreviewScreen extends StatelessWidget {
                       color: Theme.of(context).colorScheme.surfaceContainerHighest,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
+                          color: Colors.black.withValues(alpha: 0.1),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
