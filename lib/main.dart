@@ -134,7 +134,7 @@ class HomeScreen extends StatelessWidget {
             value: viewModel.isRecording,
             onChanged: (v) => viewModel.toggleRecording(),
             activeTrackColor: Colors.red.withValues(alpha: 0.5),
-            activeColor: Colors.red,
+            activeThumbColor: Colors.red,
           ),
         ],
       ),
