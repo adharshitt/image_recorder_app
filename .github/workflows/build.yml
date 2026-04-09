@@ -1,0 +1,24 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+      - name: Install Dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Build iOS
+        run: flutter build ios --release --no-codesign
+      - name: Build Android
+        run: flutter build apk --release
