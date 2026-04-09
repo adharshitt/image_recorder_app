@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
+import 'package:share_plus/share_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,7 +60,7 @@ class AppStateViewModel extends ChangeNotifier {
     if (historyJson != null) {
       final List<dynamic> decoded = jsonDecode(historyJson);
       _history = decoded.map((item) => RecordingModel.fromJson(item)).toList();
-      _history.sort((a, b) => b.date.compareTo(a.date)); // Newest first
+      _history.sort((a, b) => b.date.compareTo(a.date));
       notifyListeners();
     }
   }
@@ -70,11 +72,17 @@ class AppStateViewModel extends ChangeNotifier {
 
   void toggleRecording() async {
     if (_isRecording) {
-      // Stopping: Save to history
       final directory = await getApplicationDocumentsDirectory();
       final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
       final String mockPath = '${directory.path}/recording_$timestamp.mp4';
       
+      // In a real build with native code, the file would be written here.
+      // For the UI demo, we'll create an empty file if it doesn't exist.
+      final file = File(mockPath);
+      if (!await file.exists()) {
+        await file.create();
+      }
+
       final newRecord = RecordingModel(
         id: timestamp,
         path: mockPath,
@@ -108,6 +116,13 @@ class AppStateViewModel extends ChangeNotifier {
     _history.removeWhere((element) => element.id == id);
     await _saveHistory();
     notifyListeners();
+  }
+
+  Future<void> downloadRecording(RecordingModel record) async {
+    final file = File(record.path);
+    if (await file.exists()) {
+      await Share.shareXFiles([XFile(record.path)], text: 'Check out my HALO recording!');
+    }
   }
 }
 
@@ -151,13 +166,11 @@ class HomeScreen extends StatelessWidget {
               title: const Text('HALO', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, letterSpacing: 2)),
               backgroundColor: Colors.black.withValues(alpha: 0.3),
               actions: [
-                // History Button
                 IconButton(
                   icon: const Icon(Icons.history_rounded, size: 28),
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
                 ),
                 const SizedBox(width: 8),
-                // Recording Indicator
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: GestureDetector(
@@ -286,14 +299,92 @@ class HistoryScreen extends StatelessWidget {
                       '${item.date.day}/${item.date.month} • ${item.date.hour}:${item.date.minute}',
                       style: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                      onPressed: () => viewModel.deleteRecord(item.id),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.play_circle_outline_rounded, color: Colors.greenAccent),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => VideoPlayerScreen(videoPath: item.path)),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.download_rounded, color: Colors.white70),
+                          onPressed: () => viewModel.downloadRecording(item),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                          onPressed: () => viewModel.deleteRecord(item.id),
+                        ),
+                      ],
                     ),
                   ),
                 );
               },
             ),
+    );
+  }
+}
+
+class VideoPlayerScreen extends StatefulWidget {
+  final String videoPath;
+  const VideoPlayerScreen({super.key, required this.videoPath});
+
+  @override
+  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+}
+
+class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  late VideoPlayerController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.videoPath))
+      ..initialize().then((_) {
+        setState(() {});
+        _controller.play();
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(title: const Text('Playback'), backgroundColor: Colors.transparent),
+      body: Center(
+        child: _controller.value.isInitialized
+            ? AspectRatio(
+                aspectRatio: _controller.value.aspectRatio,
+                child: Stack(
+                  alignment: Alignment.bottomCenter,
+                  children: [
+                    VideoPlayer(_controller),
+                    VideoProgressIndicator(_controller, allowScrubbing: true),
+                    Positioned(
+                      bottom: 20,
+                      child: FloatingActionButton(
+                        mini: true,
+                        onPressed: () {
+                          setState(() {
+                            _controller.value.isPlaying ? _controller.pause() : _controller.play();
+                          });
+                        },
+                        child: Icon(_controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : const CircularProgressIndicator(),
+      ),
     );
   }
 }
