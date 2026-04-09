@@ -1,29 +1,90 @@
 import 'dart:io';
 import 'dart:ui';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AppStateViewModel()),
+        ChangeNotifierProvider(create: (_) => AppStateViewModel(prefs)),
       ],
       child: const ImageRecorderApp(),
     ),
   );
 }
 
+class RecordingModel {
+  final String id;
+  final String path;
+  final DateTime date;
+  final String name;
+
+  RecordingModel({required this.id, required this.path, required this.date, required this.name});
+
+  Map<String, dynamic> toJson() => {'id': id, 'path': path, 'date': date.toIso8601String(), 'name': name};
+
+  factory RecordingModel.fromJson(Map<String, dynamic> json) => RecordingModel(
+        id: json['id'],
+        path: json['path'],
+        date: DateTime.parse(json['date']),
+        name: json['name'],
+      );
+}
+
 class AppStateViewModel extends ChangeNotifier {
+  final SharedPreferences prefs;
   bool _isRecording = false;
   File? _selectedImage;
+  List<RecordingModel> _history = [];
   final ImagePicker _picker = ImagePicker();
+
+  AppStateViewModel(this.prefs) {
+    _loadHistory();
+  }
 
   bool get isRecording => _isRecording;
   File? get selectedImage => _selectedImage;
+  List<RecordingModel> get history => _history;
 
-  void toggleRecording() {
+  void _loadHistory() {
+    final String? historyJson = prefs.getString('recording_history');
+    if (historyJson != null) {
+      final List<dynamic> decoded = jsonDecode(historyJson);
+      _history = decoded.map((item) => RecordingModel.fromJson(item)).toList();
+      _history.sort((a, b) => b.date.compareTo(a.date)); // Newest first
+      notifyListeners();
+    }
+  }
+
+  Future<void> _saveHistory() async {
+    final String encoded = jsonEncode(_history.map((e) => e.toJson()).toList());
+    await prefs.setString('recording_history', encoded);
+  }
+
+  void toggleRecording() async {
+    if (_isRecording) {
+      // Stopping: Save to history
+      final directory = await getApplicationDocumentsDirectory();
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final String mockPath = '${directory.path}/recording_$timestamp.mp4';
+      
+      final newRecord = RecordingModel(
+        id: timestamp,
+        path: mockPath,
+        date: DateTime.now(),
+        name: 'Session #$timestamp',
+      );
+      
+      _history.insert(0, newRecord);
+      await _saveHistory();
+    }
     _isRecording = !_isRecording;
     notifyListeners();
   }
@@ -35,10 +96,7 @@ class AppStateViewModel extends ChangeNotifier {
         _selectedImage = File(image.path);
         notifyListeners();
         if (context.mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const ImagePreviewScreen()),
-          );
+          Navigator.push(context, MaterialPageRoute(builder: (context) => const ImagePreviewScreen()));
         }
       }
     } catch (e) {
@@ -46,8 +104,9 @@ class AppStateViewModel extends ChangeNotifier {
     }
   }
 
-  void clearImage() {
-    _selectedImage = null;
+  void deleteRecord(String id) async {
+    _history.removeWhere((element) => element.id == id);
+    await _saveHistory();
     notifyListeners();
   }
 }
@@ -68,9 +127,6 @@ class ImageRecorderApp extends StatelessWidget {
           brightness: Brightness.dark,
           surface: const Color(0xFF0A0A0A),
         ),
-        textTheme: const TextTheme(
-          headlineMedium: TextStyle(fontWeight: FontWeight.bold, letterSpacing: -0.5),
-        ),
       ),
       home: const HomeScreen(),
     );
@@ -87,35 +143,52 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(60),
+        preferredSize: const Size.fromHeight(70),
         child: ClipRRect(
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
             child: AppBar(
-              title: const Text('HALO', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24)),
-              backgroundColor: Colors.black.withValues(alpha: 0.2),
-              centerTitle: false,
+              title: const Text('HALO', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, letterSpacing: 2)),
+              backgroundColor: Colors.black.withValues(alpha: 0.3),
               actions: [
-                Container(
-                  margin: const EdgeInsets.only(right: 16),
-                  child: IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: viewModel.isRecording ? Colors.red.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
+                // History Button
+                IconButton(
+                  icon: const Icon(Icons.history_rounded, size: 28),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
+                ),
+                const SizedBox(width: 8),
+                // Recording Indicator
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: GestureDetector(
+                    onTap: viewModel.toggleRecording,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: viewModel.isRecording ? Colors.red.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: viewModel.isRecording ? Colors.red : Colors.white24),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            viewModel.isRecording ? Icons.stop_circle : Icons.fiber_manual_record,
+                            color: viewModel.isRecording ? Colors.red : Colors.white,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            viewModel.isRecording ? 'REC' : 'IDLE',
+                            style: TextStyle(
+                              color: viewModel.isRecording ? Colors.red : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    icon: Icon(
-                      viewModel.isRecording ? Icons.stop_circle : Icons.fiber_manual_record,
-                      color: viewModel.isRecording ? Colors.red : Colors.white,
-                    ),
-                    onPressed: () {
-                      viewModel.toggleRecording();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          behavior: SnackBarBehavior.floating,
-                          content: Text(viewModel.isRecording ? 'Recording Started' : 'Recording Saved'),
-                          backgroundColor: viewModel.isRecording ? Colors.blue : Colors.green,
-                        ),
-                      );
-                    },
                   ),
                 ),
               ],
@@ -123,80 +196,104 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
-      body: Stack(
-        children: [
-          // Ambient background glow
-          Positioned(
-            top: -100,
-            right: -50,
-            child: Container(
-              width: 300,
-              height: 300,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF2563EB).withValues(alpha: 0.15),
-              ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0.8, -0.6),
+            radius: 1.2,
+            colors: [Color(0xFF1E3A8A), Color(0xFF0A0A0A)],
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              children: [
+                const Spacer(),
+                const Icon(Icons.blur_on_rounded, size: 100, color: Colors.blueAccent),
+                const SizedBox(height: 32),
+                const Text('Elite Experience', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                Text(
+                  'Your captures are now tracked and saved locally in your private history vault.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 16, height: 1.5),
+                ),
+                const Spacer(),
+                ElevatedButton(
+                  onPressed: () => viewModel.pickImage(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                    minimumSize: const Size(double.infinity, 64),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                    elevation: 20,
+                    shadowColor: Colors.blue.withValues(alpha: 0.4),
+                  ),
+                  child: const Text('ADD IMAGE', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                ),
+                const SizedBox(height: 40),
+              ],
             ),
           ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
+        ),
+      ),
+    );
+  }
+}
+
+class HistoryScreen extends StatelessWidget {
+  const HistoryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<AppStateViewModel>();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Vault History'), backgroundColor: Colors.transparent),
+      body: viewModel.history.isEmpty
+          ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Spacer(),
-                  Icon(Icons.auto_awesome, size: 80, color: Theme.of(context).colorScheme.primary),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Capture & Record',
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Select an image to view it in full screen while your session is being recorded.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 16),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => viewModel.pickImage(context),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF2563EB), Color(0xFF7C3AED)],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF2563EB).withValues(alpha: 0.3),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: const Center(
-                        child: Text(
-                          'Add Image',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  if (viewModel.isRecording)
-                    TextButton.icon(
-                      onPressed: viewModel.toggleRecording,
-                      icon: const Icon(Icons.check_circle_outline, color: Colors.green),
-                      label: const Text('Finish Recording', style: TextStyle(color: Colors.green)),
-                    ),
+                  Icon(Icons.history_toggle_off_rounded, size: 64, color: Colors.white.withValues(alpha: 0.2)),
+                  const SizedBox(height: 16),
+                  Text('No recordings yet', style: TextStyle(color: Colors.white.withValues(alpha: 0.3))),
                 ],
               ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(20),
+              itemCount: viewModel.history.length,
+              itemBuilder: (context, index) {
+                final item = viewModel.history[index];
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.03),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.1), shape: BoxShape.circle),
+                      child: const Icon(Icons.videocam_rounded, color: Colors.blueAccent),
+                    ),
+                    title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(
+                      '${item.date.day}/${item.date.month} • ${item.date.hour}:${item.date.minute}',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                      onPressed: () => viewModel.deleteRecord(item.id),
+                    ),
+                  ),
+                );
+              },
             ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -214,8 +311,6 @@ class ImagePreviewScreen extends StatelessWidget {
         children: [
           Positioned.fill(
             child: InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 4.0,
               child: Hero(
                 tag: 'selected_image',
                 child: viewModel.selectedImage != null
@@ -225,57 +320,29 @@ class ImagePreviewScreen extends StatelessWidget {
             ),
           ),
           Positioned(
-            top: 50,
-            left: 20,
-            child: ClipOval(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: CircleAvatar(
-                  backgroundColor: Colors.white.withValues(alpha: 0.1),
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
             bottom: 40,
             left: 24,
             right: 24,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(24),
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
                 child: Container(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(24),
                   color: Colors.white.withValues(alpha: 0.05),
                   child: Row(
                     children: [
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('PREVIEW READY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2)),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Visual verified successfully',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14),
-                            ),
-                          ],
-                        ),
+                      const Expanded(
+                        child: Text('Visual Verified', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                       ),
                       ElevatedButton(
                         onPressed: () => Navigator.pop(context),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        child: const Text('Done', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: const Text('Done'),
                       ),
                     ],
                   ),
