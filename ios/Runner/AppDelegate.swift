@@ -2,7 +2,6 @@ import Flutter
 import UIKit
 import ReplayKit
 import SwiftUI
-import FoundationModels // apple-on-device-ai skill
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {
@@ -26,11 +25,6 @@ import FoundationModels // apple-on-device-ai skill
                 self?.startRecording(result: result)
             case "stopRecording":
                 self?.stopRecording(result: result)
-            case "analyzeSession":
-                // apple-on-device-ai skill integration
-                Task {
-                    await self?.analyzeRecordingContext(result: result)
-                }
             default:
                 result(FlutterMethodNotImplemented)
             }
@@ -60,24 +54,8 @@ import FoundationModels // apple-on-device-ai skill
             if let error = error {
                 result(FlutterError(code: "STOP_FAILED", message: error.localizedDescription, details: nil))
             } else {
-                // In a real app, present the previewViewController
-                result("Saved and ready for Remotion processing")
+                result("Saved")
             }
-        }
-    }
-    
-    // apple-on-device-ai: Using SystemLanguageModel to summarize the app session
-    func analyzeRecordingContext(result: @escaping FlutterResult) async {
-        do {
-            if SystemLanguageModel.default.availability == .available {
-                let session = LanguageModelSession()
-                let summary = try await session.respond(to: "Summarize this user's recording session: The user added a photo and previewed it.")
-                result(summary.content)
-            } else {
-                result("Apple Intelligence not available on this device.")
-            }
-        } catch {
-            result(FlutterError(code: "AI_ERROR", message: error.localizedDescription, details: nil))
         }
     }
 }
