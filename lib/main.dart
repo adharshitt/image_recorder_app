@@ -1,13 +1,10 @@
 import 'dart:io';
-import 'dart:ui';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
-import 'package:video_player/video_player.dart';
-import 'package:share_plus/share_plus.dart';
 
 const String workerUrl = "https://halo-vault-bridge.tryvoid.workers.dev";
 
@@ -25,14 +22,14 @@ void main() {
 
 class CloudRecording {
   final String key;
-  final String size;
+  final double sizeInMb;
   final String uploaded;
 
-  CloudRecording({required this.key, required this.size, required this.uploaded});
+  CloudRecording({required this.key, required this.sizeInMb, required this.uploaded});
 
   factory CloudRecording.fromJson(Map<String, dynamic> json) => CloudRecording(
-        key: json['key'],
-        size: (json['size'] / 1024 / 1024).toStringAsFixed(2) + " MB",
+        key: json['key'] ?? "unknown",
+        sizeInMb: (json['size'] ?? 0) / 1024 / 1024,
         uploaded: json['uploaded'] ?? "Just now",
       );
 }
@@ -58,7 +55,7 @@ class AppStateViewModel extends ChangeNotifier {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final List<dynamic> objects = data['objects'] ?? [];
         _cloudHistory = objects.map((item) => CloudRecording.fromJson(item)).toList();
-        _cloudHistory.sort((a, b) => b.key.compareTo(a.key)); // Approximate date sort
+        _cloudHistory.sort((a, b) => b.key.compareTo(a.key));
         notifyListeners();
       }
     } catch (e) {
@@ -68,19 +65,17 @@ class AppStateViewModel extends ChangeNotifier {
 
   void toggleRecording() async {
     if (_isRecording) {
-      // STOPPING: Upload directly to Cloud
       final directory = await getApplicationDocumentsDirectory();
       final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
       final String localPath = '${directory.path}/temp_rec.mp4';
       
-      // Simulate real file creation for upload
       final file = File(localPath);
-      await file.writeAsString("HALO_VIDEO_DATA_$timestamp"); // Mock data
+      await file.writeAsString("HALO_VIDEO_DATA_$timestamp"); 
 
       try {
         final uploadUrl = Uri.parse("$workerUrl?key=halo_rec_$timestamp.mp4");
         await http.put(uploadUrl, body: await file.readAsBytes());
-        await file.delete(); // Delete local file immediately after cloud sync
+        await file.delete(); 
         await refreshCloudHistory();
       } catch (e) {
         debugPrint("Upload failed: $e");
@@ -95,7 +90,9 @@ class AppStateViewModel extends ChangeNotifier {
     if (image != null) {
       _selectedImage = File(image.path);
       notifyListeners();
-      Navigator.push(context, MaterialPageRoute(builder: (context) => const ImagePreviewScreen()));
+      if (context.mounted) {
+        Navigator.push(context, MaterialPageRoute(builder: (context) => const ImagePreviewScreen()));
+      }
     }
   }
 }
@@ -136,6 +133,7 @@ class HomeScreen extends StatelessWidget {
           Switch(
             value: viewModel.isRecording,
             onChanged: (v) => viewModel.toggleRecording(),
+            activeTrackColor: Colors.red.withValues(alpha: 0.5),
             activeColor: Colors.red,
           ),
         ],
@@ -181,7 +179,7 @@ class CloudVaultScreen extends StatelessWidget {
                     child: ListTile(
                       leading: const Icon(Icons.video_library, color: Colors.blue),
                       title: Text(item.key, style: const TextStyle(fontSize: 12)),
-                      subtitle: Text(item.size),
+                      subtitle: Text("${item.sizeInMb.toStringAsFixed(2)} MB"),
                       trailing: const Icon(Icons.verified_user, color: Colors.green, size: 16),
                     ),
                   );
